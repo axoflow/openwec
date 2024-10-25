@@ -325,12 +325,12 @@ impl PrincsFilter {
         })
     }
 
-    pub fn princs(&self) -> &HashSet<String> {
+    pub fn princ_literals(&self) -> &HashSet<String> {
         &self.princs
     }
 
     pub fn princs_to_string(&self) -> String {
-        self.princs()
+        self.princs
             .iter()
             .cloned()
             .collect::<Vec<String>>()
@@ -338,7 +338,7 @@ impl PrincsFilter {
     }
 
     pub fn princs_to_opt_string(&self) -> Option<String> {
-        if self.princs().is_empty() {
+        if self.princs.is_empty() {
             None
         } else {
             Some(self.princs_to_string())
@@ -873,9 +873,9 @@ impl SubscriptionData {
 
         match self.princs_filter().operation {
             None => true,
-            Some(PrincsFilterOperation::Only) => self.princs_filter().princs().contains(principal),
+            Some(PrincsFilterOperation::Only) => self.princs_filter().princ_literals().contains(principal),
             Some(PrincsFilterOperation::Except) => {
-                !self.princs_filter().princs().contains(principal)
+                !self.princs_filter().princ_literals().contains(principal)
             }
         }
     }
