@@ -98,7 +98,7 @@ pub struct SubscriptionBody {
     pub max_time: u32,
     pub max_elements: Option<u32>,
     pub max_envelope_size: u32,
-    pub thumbprint: Option<String>,
+    pub thumbprint: Option<Vec<String>>,
     pub public_version: String,
     pub revision: Option<String>,
     pub locale: Option<String>,
@@ -204,7 +204,8 @@ impl Serializable for SubscriptionBody {
                                                                                     "issuer",
                                                                                 ))
                                                                                 .write_text_content(BytesText::new(
-                                                                                    tmb,
+                                                                                            //FIXME: allow multiple thumbprints
+                                                                                    tmb.first().map(String::as_str).unwrap_or(""),
                                                                                 ))?;
                                                                                 Ok::<(), quick_xml::Error>(())
                                                                             })?;
