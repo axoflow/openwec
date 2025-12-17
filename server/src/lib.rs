@@ -1001,6 +1001,7 @@ fn create_tls_server(
 
                 let subject =
                     subject_from_cert(cert.as_ref()).expect("Could not parse client certificate");
+                debug!("Incoming TLS connection from subject '{}'", &subject);
 
                 let issuer = issuer_from_cert(cert.as_ref())
                     .expect("Could not parse issuer from client certificate");
