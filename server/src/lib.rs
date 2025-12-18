@@ -70,7 +70,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::logging::ACCESS_LOGGER;
 use crate::proxy_protocol::read_proxy_header;
-use crate::tls::{make_config, subject_from_cert};
+use crate::tls::{issuer_from_cert, make_config, subject_from_cert};
 
 pub enum RequestCategory {
     Enumerate(String),
@@ -299,8 +299,8 @@ async fn authenticate(
         AuthenticationContext::Tls(subject, _) => {
             // if subject is empty, show unauthorized error
             if subject.is_empty() {
-                log_auth_error(addr, req, "Empty certificate".to_owned(), true);
-                bail!("Empty certificate")
+                log_auth_error(addr, req, "Empty certificate subject".to_owned(), true);
+                bail!("Empty certificate subject");
             }
 
             let response = Response::builder();
@@ -947,7 +947,8 @@ fn create_tls_server(
             let svc_monitoring_settings = monitoring_settings.clone();
             let subscriptions = collector_subscriptions.clone();
             let collector_heartbeat_tx = collector_heartbeat_tx.clone();
-            let thumbprint = tls_config.thumbprint.clone();
+            let ca_thumbprints = tls_config.thumbprints.clone();
+
             let tls_acceptor = tls_acceptor.clone();
 
             // Create a "rx" channel end for the task
@@ -1001,8 +1002,24 @@ fn create_tls_server(
                 let subject =
                     subject_from_cert(cert.as_ref()).expect("Could not parse client certificate");
 
+                let issuer = issuer_from_cert(cert.as_ref())
+                    .expect("Could not parse issuer from client certificate");
+                debug!("Client certificate issued by '{}'", &issuer);
+                for entry in &ca_thumbprints {
+                    debug!("Known CA subject '{}', thumbprint '{}'", &entry.0, &entry.1);
+                }
+
+                let matching_ca_entry = ca_thumbprints
+                    .get(&issuer)
+                    .cloned()
+                    .or_else(|| {
+                        warn!("Could not find thumbprint for CA subject {}, using the first one present", issuer);
+                        ca_thumbprints.values().next().cloned()
+                    })
+                    .expect("At least one CA thumbprint should be present");
+
                 // Initialize Authentication context once for each TCP connection
-                let auth_ctx = AuthenticationContext::Tls(subject, thumbprint);
+                let auth_ctx = AuthenticationContext::Tls(subject.clone(), matching_ca_entry);
 
                 // Hyper needs a wrapper for the stream
                 let io = TokioIo::new(stream);
