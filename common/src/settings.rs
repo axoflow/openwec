@@ -4,7 +4,10 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::{fs::File, io::Read};
 
-pub const DEFAULT_CONFIG_FILE: &str = "/etc/openwec.conf.toml";
+pub const DEFAULT_CONFIG_FILE: &str = match option_env!("OPENWEC_DEFAULT_CONFIG_FILE") {
+    Some(path) => path,
+    None => "/etc/openwec.conf.toml",
+};
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(tag = "type")]
