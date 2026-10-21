@@ -307,6 +307,17 @@ async fn main() {
                     .arg(arg!(<source> "Name or UUID of the source subscription"))
                     .arg(arg!(<destination> "Name or UUID of the destination subscription"))
                 )
+                .subcommand(
+                    Command::new("export")
+                    .about("Export bookmarks in a json file")
+                    .arg(arg!(-s --subscription <SUBSCRIPTION> "Name or UUID of a subscription if you want to export only its bookmarks"))
+                    .arg(arg!(<file> "Path of the JSON file to write. '-' means stdout.").required(false).default_value("-"))
+                )
+                .subcommand(
+                    Command::new("import")
+                    .about("Import bookmarks from a json file")
+                    .arg(arg!(<file> "JSON file to read. '-' means stdin."))
+                )
         )
         .subcommand(
             Command::new("stats")
