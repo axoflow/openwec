@@ -317,6 +317,7 @@ async fn main() {
                     Command::new("import")
                     .about("Import bookmarks from a json file")
                     .arg(arg!(<file> "JSON file to read. '-' means stdin."))
+                    .arg(arg!(--"machine-id" "The machines are named by the MachineID (syslog-ng WEC migration)"))
                 )
         )
         .subcommand(

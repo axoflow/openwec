@@ -1,6 +1,10 @@
 use anyhow::{anyhow, bail, Context, Result};
 use clap::ArgMatches;
-use common::{bookmark::BookmarkData, database::Db, subscription::SubscriptionData};
+use common::{
+    bookmark::{machine_id_key, BookmarkData},
+    database::Db,
+    subscription::SubscriptionData,
+};
 use std::{
     collections::HashMap,
     fs::File,
@@ -206,7 +210,10 @@ async fn export(db: &Db, matches: &ArgMatches) -> Result<()> {
 
 async fn import(db: &Db, matches: &ArgMatches) -> Result<()> {
     let path = matches.get_one::<String>("file").expect("Required by clap");
-    let bookmarks = read_bookmarks(path)?;
+    let mut bookmarks = read_bookmarks(path)?;
+    if matches.get_flag("machine-id") {
+        key_by_machine_id(&mut bookmarks);
+    }
     let imported = import_bookmarks(db, bookmarks).await?;
     println!("{} bookmarks imported", imported);
     Ok(())
@@ -240,6 +247,12 @@ fn describe(path: &str) -> &str {
         "standard input"
     } else {
         path
+    }
+}
+
+fn key_by_machine_id(bookmarks: &mut [BookmarkData]) {
+    for data in bookmarks {
+        data.machine = machine_id_key(&data.machine);
     }
 }
 
@@ -345,5 +358,12 @@ mod tests {
 
         assert_eq!(read_bookmarks(file)?, bookmarks);
         Ok(())
+    }
+
+    #[test]
+    fn machine_ids_become_the_keys_the_server_hands_over() {
+        let mut bookmarks = vec![data("dc01.corp.example.com", "sub", "<BookmarkList/>")];
+        key_by_machine_id(&mut bookmarks);
+        assert_eq!(bookmarks[0].machine, "MachineID:dc01.corp.example.com");
     }
 }
