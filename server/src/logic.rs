@@ -18,12 +18,13 @@ use crate::{
     AuthenticationContext, RequestCategory, RequestData,
 };
 use common::{
+    bookmark::machine_id_key,
     database::Db,
     settings::{Collector, Monitoring, Server},
     subscription::{SubscriptionOutputFormat, SubscriptionUuid},
 };
 use hyper::http::status::StatusCode;
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 use metrics::counter;
 use std::{
     collections::{HashMap, HashSet},
@@ -99,6 +100,43 @@ fn create_subscription_body(
         locale: subscription_data.locale().cloned(),
         data_locale: subscription_data.data_locale().cloned(),
     }
+}
+
+async fn fixup_imported_syslog_ng_wec_bookmark(
+    db: &Db,
+    client: &str,
+    machine_id: Option<&str>,
+    subscription: &str,
+) -> Result<Option<String>> {
+    let Some(machine_id) = machine_id else {
+        return Ok(None);
+    };
+    let key = machine_id_key(machine_id);
+    let Some(bookmark) = db
+        .get_bookmark(&key, subscription)
+        .await
+        .context("Failed to retrieve imported bookmark from database")?
+    else {
+        return Ok(None);
+    };
+    info!(
+        "Bookmark imported for {} within subscription {} now belongs to {}",
+        machine_id, subscription, client
+    );
+    if let Err(e) = db.store_bookmark(client, subscription, &bookmark).await {
+        warn!(
+            "Failed to store the imported bookmark of {} under {}: {:?}",
+            machine_id, client, e
+        );
+        return Ok(Some(bookmark));
+    }
+    if let Err(e) = db.delete_bookmarks(Some(&key), Some(subscription)).await {
+        warn!(
+            "Failed to delete the imported bookmark of {} within subscription {}: {:?}",
+            machine_id, subscription, e
+        );
+    }
+    Ok(Some(bookmark))
 }
 
 async fn handle_enumerate(
@@ -242,6 +280,16 @@ async fn handle_enumerate(
             .get_bookmark(request_data.client(), &subscription_data.uuid_string())
             .await
             .context("Failed to retrieve current bookmark from database")?;
+
+        if bookmark.is_none() {
+            bookmark = fixup_imported_syslog_ng_wec_bookmark(
+                db,
+                request_data.client(),
+                machine_id,
+                &subscription_data.uuid_string(),
+            )
+            .await?;
+        }
 
         if bookmark.is_none() && subscription_data.read_existing_events() {
             bookmark =
@@ -695,5 +743,76 @@ pub async fn handle_message(
         .context("Failed to handle Events action")
     } else {
         Err(anyhow!("Unsupported message {}", action))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use common::database::schema::{sqlite::register_migrations, Migrator};
+    use common::database::sqlite::SQLiteDatabase;
+    use common::subscription::SubscriptionData;
+
+    async fn migrated_db() -> Result<(Db, tempfile::TempPath)> {
+        let path = tempfile::NamedTempFile::new()?.into_temp_path();
+        let mut sqlite = SQLiteDatabase::new(path.to_str().unwrap()).await?;
+        register_migrations(&mut sqlite);
+        let db: Db = Arc::new(sqlite);
+        db.setup_schema().await?;
+        Migrator::new(db.clone()).up(None, false).await?;
+        Ok((db, path))
+    }
+
+    #[tokio::test]
+    async fn the_imported_bookmark_moves_to_the_client() -> Result<()> {
+        let (db, _path) = migrated_db().await?;
+        let subscription = SubscriptionData::new("sub", "query");
+        db.store_subscription(&subscription).await?;
+        let uuid = subscription.uuid_string();
+        let alias = machine_id_key("dc01.corp.example.com");
+        db.store_bookmark(&alias, &uuid, "<BookmarkList/>").await?;
+
+        let claimed = fixup_imported_syslog_ng_wec_bookmark(
+            &db,
+            "DC01$@CORP.EXAMPLE.COM",
+            Some("dc01.corp.example.com"),
+            &uuid,
+        )
+        .await?;
+
+        assert_eq!(claimed.as_deref(), Some("<BookmarkList/>"));
+        assert_eq!(
+            db.get_bookmark("DC01$@CORP.EXAMPLE.COM", &uuid)
+                .await?
+                .as_deref(),
+            Some("<BookmarkList/>")
+        );
+        assert!(db.get_bookmark(&alias, &uuid).await?.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn nothing_moves_without_an_import_or_a_machine_id() -> Result<()> {
+        let (db, _path) = migrated_db().await?;
+        let subscription = SubscriptionData::new("sub", "query");
+        db.store_subscription(&subscription).await?;
+        let uuid = subscription.uuid_string();
+
+        let client = "DC01$@CORP.EXAMPLE.COM";
+        assert!(fixup_imported_syslog_ng_wec_bookmark(
+            &db,
+            client,
+            Some("dc02.corp.example.com"),
+            &uuid
+        )
+        .await?
+        .is_none());
+        assert!(
+            fixup_imported_syslog_ng_wec_bookmark(&db, client, None, &uuid)
+                .await?
+                .is_none()
+        );
+        assert!(db.get_bookmark(client, &uuid).await?.is_none());
+        Ok(())
     }
 }
